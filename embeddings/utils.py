@@ -51,9 +51,21 @@ def create_lookup_tables(words):
     :param words: Input list of words
     :return: A tuple of dicts.  The first dict....
     """
+    # words: ['word1', 'word1', 'word2', 'word3']
+    
+    # word_counts: Counter({'word1': 2, 'word3': 1, 'word2': 1}, where the values are amount of ocurrences for each word
     word_counts = Counter(words)
+    
+    # sorted list of words, sorted by value of counter descending: ['word1', 'word3', 'word2']
+    # i.e. list of words sorted by most frequent first
     sorted_vocab = sorted(word_counts, key=word_counts.get, reverse=True)
+    
+    # dictionary: {0: 'word1', 1: 'word3', 2: 'word2'}
+    # i.e. index of most frequent as key, word as value
     int_to_vocab = {ii: word for ii, word in enumerate(sorted_vocab)}
+    
+    # dictionary: {'word3': 1, 'word2': 2, 'word1': 0}
+    # i.e. word to the index in the sorted list
     vocab_to_int = {word: ii for ii, word in int_to_vocab.items()}
 
     return vocab_to_int, int_to_vocab
