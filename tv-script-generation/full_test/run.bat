@@ -1,0 +1,1 @@
+floyd run --gpu --mode job --env tensorflow-1.0 "python -u floyd_experiment.py"
