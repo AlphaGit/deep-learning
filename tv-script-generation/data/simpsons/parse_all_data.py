@@ -6,4 +6,4 @@ df.drop('speaking_line', axis=1, inplace=True)
 df['raw_character_text'] = df['raw_character_text'].str.lower().replace(r'[^a-z]', '_')
 df['line'] = df['raw_character_text'] + ': ' + df['normalized_text']
 df.drop(['raw_character_text', 'normalized_text'], axis=1, inplace=True)
-df.to_csv('all_lines.txt', columns=['line'], header=False, index=False)
+df.to_csv('all_lines.txt', columns=['line'], header=False, index=False, encoding='utf-8')
