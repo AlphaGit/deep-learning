@@ -1,36 +1,33 @@
+# -*- coding: utf-8 -*-
 ## Parameters
 
-# Number of Epochs
-num_epochs = 20
-# Batch Size
-batch_size = 512
-# RNN Size
+num_epochs = 1
+batch_size = 64
 rnn_size = 50
-# Sequence Length
+rnn_layer_count = 1
 seq_length = 20
-# Learning Rate
 learning_rate = 0.001
-# Show stats for every n number of batches
-show_every_n_batches = 10
+data_percentage = 0.01
 
 save_dir = './save'
 data_dir = 'all_lines_manual.txt'
 
 # For final example generation
 gen_length = 200
-prime_word = 'moe'
+prime_word = 'moe_szyslak'
 
 #########################################################################
 
+import os
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 import helper
 import numpy as np
-from collections import Counter
-import numpy as np
-import tensorflow as tf
-from tensorflow.contrib import seq2seq
-from distutils.version import LooseVersion
 import warnings
 import tensorflow as tf
+
+from distutils.version import LooseVersion
+from collections import Counter
+from tensorflow.contrib import seq2seq
 
 #########################################################################
 
@@ -92,6 +89,7 @@ def build_nn(cell, rnn_size, input_data, vocab_size):
     embed_layer = get_embed(input_data, vocab_size, rnn_size)
     rnn, final_state = build_rnn(cell, embed_layer)
     fully_connected = tf.layers.dense(rnn, units=vocab_size, activation=None)
+    tf.summary.histogram('fully_connected', fully_connected)
     return (fully_connected, final_state)
 
 #########################################################################
@@ -124,6 +122,23 @@ def get_batches(int_text, batch_size, seq_length):
 
 #########################################################################
 
+def pick_word(probabilities, int_to_vocab):
+    to_choose_from = list(int_to_vocab.values())
+    return np.random.choice(to_choose_from, p=probabilities)
+
+#########################################################################
+
+def preprocess_text(text, token_dict):
+    for key, token in token_dict.items():
+        text = text.replace(key, ' {} '.format(token))
+
+    text = text.lower()
+    text = text.split()
+
+    return text
+
+#########################################################################
+
 def get_tensors(loaded_graph):
     input_tensor = loaded_graph.get_tensor_by_name("input:0")
     initial_state_tensor = loaded_graph.get_tensor_by_name("initial_state:0")
@@ -133,15 +148,18 @@ def get_tensors(loaded_graph):
 
 #########################################################################
 
-def pick_word(probabilities, int_to_vocab):
-    to_choose_from = list(int_to_vocab.values())
-    return np.random.choice(to_choose_from, p=probabilities)
-
-#########################################################################
+tf.logging.set_verbosity(tf.logging.ERROR)
 
 text = helper.load_data(data_dir)
-helper.preprocess_and_save_data(data_dir, token_lookup, create_lookup_tables)
-int_text, vocab_to_int, int_to_vocab, token_dict = helper.load_preprocess()
+
+text_lines_to_use = int(len(text) * data_percentage)
+print("Data: Using {:,} out of {:,} total lines available".format(text_lines_to_use, len(text)))
+text = text[:text_lines_to_use]
+
+token_dict = token_lookup()
+text = preprocess_text(text, token_dict)
+vocab_to_int, int_to_vocab = create_lookup_tables(text)
+int_text = [vocab_to_int[word] for word in text]
 
 # Check TensorFlow Version
 assert LooseVersion(tf.__version__) >= LooseVersion('1.0'), 'Please use TensorFlow version 1.0 or newer'
@@ -158,7 +176,7 @@ with train_graph.as_default():
     vocab_size = len(int_to_vocab)
     input_text, targets, lr = get_inputs()
     input_data_shape = tf.shape(input_text)
-    cell, initial_state = get_init_cell(input_data_shape[0], rnn_size, layer_count=2)
+    cell, initial_state = get_init_cell(input_data_shape[0], rnn_size, layer_count=rnn_layer_count)
     logits, final_state = build_nn(cell, rnn_size, input_text, vocab_size)
 
     # Probabilities for generating words
@@ -169,6 +187,7 @@ with train_graph.as_default():
         logits,
         targets,
         tf.ones([input_data_shape[0], input_data_shape[1]]))
+    tf.summary.scalar('train_loss', cost)
 
     # Optimizer
     optimizer = tf.train.AdamOptimizer(lr)
@@ -178,10 +197,16 @@ with train_graph.as_default():
     capped_gradients = [(tf.clip_by_value(grad, -1., 1.), var) for grad, var in gradients]
     train_op = optimizer.apply_gradients(capped_gradients)
 
-batches = get_batches(int_text, batch_size, seq_length)
+    merged_summaries = tf.summary.merge_all()
+    writer_dirname = 'output/e{}_b{}_rnn{}_rnnl{}_seq{}_lr{}_dp{}'.format(num_epochs, batch_size, rnn_size, rnn_layer_count, seq_length, learning_rate, data_percentage)
+    train_writer = tf.summary.FileWriter(writer_dirname, graph=train_graph)
+
+    batches = get_batches(int_text, batch_size, seq_length)
 
 with tf.Session(graph=train_graph) as sess:
     sess.run(tf.global_variables_initializer())
+
+    #print('Train graph:', train_graph.get_operations())
 
     for epoch_i in range(num_epochs):
         state = sess.run(initial_state, {input_text: batches[0][0]})
@@ -194,32 +219,26 @@ with tf.Session(graph=train_graph) as sess:
                 lr: learning_rate}
             train_loss, state, _ = sess.run([cost, final_state, train_op], feed)
 
-            # Show every <show_every_n_batches> batches
-            if (epoch_i * len(batches) + batch_i) % show_every_n_batches == 0:
-                print('Epoch {:>3} Batch {:>4}/{}   train_loss = {:.3f}'.format(
-                    epoch_i,
-                    batch_i,
-                    len(batches),
-                    train_loss))
+        print('Epoch {:>3}/{} train_loss = {:.3f}'.format(epoch_i + 1, num_epochs, train_loss))
+
+        summary = sess.run(merged_summaries, feed)
+        train_writer.add_summary(summary, epoch_i)
 
     # Save Model
     saver = tf.train.Saver()
     saver.save(sess, save_dir)
     print('Model Trained and Saved')
 
-# Save parameters for checkpoint
-helper.save_params((seq_length, save_dir))
-
 loaded_graph = tf.Graph()
 with tf.Session(graph=loaded_graph) as sess:
     # Load saved model
-    loader = tf.train.import_meta_graph(load_dir + '.meta')
-    loader.restore(sess, load_dir)
+    loader = tf.train.import_meta_graph(save_dir + '.meta')
+    loader.restore(sess, save_dir)
 
     # Get Tensors from loaded model
     input_text, initial_state, final_state, probs = get_tensors(loaded_graph)
 
-    # Sentences generation setup
+    # Sentences generation set~up
     gen_sentences = [prime_word + ':']
     prev_state = sess.run(initial_state, {input_text: np.array([[1]])})
 
@@ -234,6 +253,7 @@ with tf.Session(graph=loaded_graph) as sess:
             [probs, final_state],
             {input_text: dyn_input, initial_state: prev_state})
         
+        #print('Probabilities.shape: ',  probabilities.shape)
         pred_word = pick_word(probabilities[dyn_seq_length-1], int_to_vocab)
 
         gen_sentences.append(pred_word)

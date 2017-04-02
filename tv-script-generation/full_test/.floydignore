@@ -10,3 +10,8 @@ lib64
 parts
 sdist
 var
+preprocess.p
+run.bat
+__pycache__/
+save.*
+output/
