@@ -1,18 +1,21 @@
 # -*- coding: utf-8 -*-
 ## Parameters
 
-num_epochs = 50
-batch_size = 512
-rnn_size = 50
-rnn_layer_count = 1
+num_epochs = 20 # 100
+batch_size = 64 #1024
+rnn_size = 20 # 50
+rnn_layer_count = 1 #2
 seq_length = 20
 learning_rate = 0.001
-data_percentage = 0.8
+data_percentage = 0.01 #1
 
-save_dir = './save'
+
+save_dir = './output/model'
 data_dir = 'all_lines_manual.txt'
 
-# For final example generation
+# For example generation
+test_every = 5
+save_every = 10
 gen_length = 200
 prime_word = 'moe_szyslak'
 
@@ -24,6 +27,8 @@ import helper
 import numpy as np
 import warnings
 import tensorflow as tf
+import timeit
+import datetime
 
 from distutils.version import LooseVersion
 from collections import Counter
@@ -208,6 +213,8 @@ print('Computation graph created.')
 
 print('Training...')
 
+all_start_time = timeit.default_timer()
+
 with tf.Session(graph=train_graph) as sess:
     sess.run(tf.global_variables_initializer())
 
@@ -217,6 +224,8 @@ with tf.Session(graph=train_graph) as sess:
     for epoch_i in range(num_epochs):
         state = sess.run(initial_state, {input_text: batches[0][0]})
 
+        last_start_time = timeit.default_timer()
+
         for batch_i, (x, y) in enumerate(batches):
             feed = {
                 input_text: x,
@@ -225,54 +234,56 @@ with tf.Session(graph=train_graph) as sess:
                 lr: learning_rate}
             train_loss, state, _ = sess.run([cost, final_state, train_op], feed)
 
-        print('Epoch {:>3}/{} train_loss = {:.3f}'.format(epoch_i + 1, num_epochs, train_loss))
+        last_end_time = timeit.default_timer()
+
+        total_seconds_so_far = last_end_time - all_start_time
+        total_time_so_far = datetime.timedelta(seconds=total_seconds_so_far)
+        estimated_to_finish = datetime.timedelta(seconds=num_epochs * total_seconds_so_far / (epoch_i + 1) - total_seconds_so_far)
+
+        print('Epoch {:>3}/{} train_loss = {:.3f}, time so far {}, estimated to finish {}'
+            .format(epoch_i + 1, num_epochs, train_loss, total_time_so_far, estimated_to_finish))
 
         summary = sess.run(merged_summaries, feed)
         train_writer.add_summary(summary, epoch_i)
 
-    # Save Model
-    saver = tf.train.Saver()
-    saver.save(sess, save_dir)
-    print('Model trained and saved.')
+        if (epoch_i % save_every == 0 or epoch_i == num_epochs - 1):
+            # Save Model
+            saver = tf.train.Saver()
+            full_save_directory = '{}/epoch_{}'.format(save_dir, epoch_i)
+            if not os.path.exists(full_save_directory):
+                os.makedirs(full_save_directory)
+            saver.save(sess, full_save_directory)
+            last_save_directory = full_save_directory
+            print('Model trained and saved to {}.'.format(full_save_directory))
 
-loaded_graph = tf.Graph()
-with tf.Session(graph=loaded_graph) as sess:
-    # Load saved model
-    loader = tf.train.import_meta_graph(save_dir + '.meta')
-    loader.restore(sess, save_dir)
+        if (epoch_i % test_every == 0 or epoch_i == num_epochs - 1):
+            print('Generating new text with prime word: {}'.format(prime_word))
+            _, _, test_final_state, test_probs = get_tensors(train_graph)
+            gen_sentences = [prime_word + ':']
+            prev_state = sess.run(initial_state, {input_text: np.array([[1]])})
 
-    # Get Tensors from loaded model
-    input_text, initial_state, final_state, probs = get_tensors(loaded_graph)
+            for n in range(gen_length):
+                # Dynamic Input
+                dyn_input = [[vocab_to_int[word] for word in gen_sentences[-seq_length:]]]
+                dyn_seq_length = len(dyn_input[0])
 
-    # Sentences generation set~up
-    print('Generating new text with prime word: {}'.format(prime_word))
-    gen_sentences = [prime_word + ':']
+                # Get Prediction
+                probabilities, prev_state = sess.run(
+                    [test_probs, test_final_state],
+                    {input_text: dyn_input, initial_state: prev_state})
+                
+                pred_word = pick_word(probabilities[dyn_seq_length-1], int_to_vocab)
 
-    prev_state = sess.run(initial_state, {input_text: np.array([[1]])})
+                gen_sentences.append(pred_word)
 
-    # Generate sentences
-    for n in range(gen_length):
-        # Dynamic Input
-        dyn_input = [[vocab_to_int[word] for word in gen_sentences[-seq_length:]]]
-        dyn_seq_length = len(dyn_input[0])
-
-        # Get Prediction
-        probabilities, prev_state = sess.run(
-            [probs, final_state],
-            {input_text: dyn_input, initial_state: prev_state})
-        
-        pred_word = pick_word(probabilities[dyn_seq_length-1], int_to_vocab)
-
-        gen_sentences.append(pred_word)
-    
-    # Remove tokens
-    tv_script = ' '.join(gen_sentences)
-    for key, token in token_dict.items():
-        ending = ' ' if key in ['\n', '(', '"'] else ''
-        tv_script = tv_script.replace(' ' + token.lower(), key)
-    tv_script = tv_script.replace('\n ', '\n')
-    tv_script = tv_script.replace('( ', '(')
-    
-    print("*********************************************************************************************")    
-    print(tv_script)
-    print("*********************************************************************************************")    
+            # Remove tokens
+            tv_script = ' '.join(gen_sentences)
+            for key, token in token_dict.items():
+                ending = ' ' if key in ['\n', '(', '"'] else ''
+                tv_script = tv_script.replace(' ' + token.lower(), key)
+            tv_script = tv_script.replace('\n ', '\n')
+            tv_script = tv_script.replace('( ', '(')
+            
+            print("*********************************************************************************************")    
+            print(tv_script)
+            print("*********************************************************************************************")    
