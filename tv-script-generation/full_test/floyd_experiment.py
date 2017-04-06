@@ -1,13 +1,13 @@
 # -*- coding: utf-8 -*-
 ## Parameters
 
-num_epochs = 1
-batch_size = 64
+num_epochs = 50
+batch_size = 512
 rnn_size = 50
 rnn_layer_count = 1
 seq_length = 20
 learning_rate = 0.001
-data_percentage = 0.01
+data_percentage = 0.8
 
 save_dir = './save'
 data_dir = 'all_lines_manual.txt'
@@ -171,6 +171,7 @@ if not tf.test.gpu_device_name():
 else:
     print('Default GPU Device: {}'.format(tf.test.gpu_device_name()))
 
+print('Creating computation graph...')
 train_graph = tf.Graph()
 with train_graph.as_default():
     vocab_size = len(int_to_vocab)
@@ -198,15 +199,20 @@ with train_graph.as_default():
     train_op = optimizer.apply_gradients(capped_gradients)
 
     merged_summaries = tf.summary.merge_all()
-    writer_dirname = 'output/e{}_b{}_rnn{}_rnnl{}_seq{}_lr{}_dp{}'.format(num_epochs, batch_size, rnn_size, rnn_layer_count, seq_length, learning_rate, data_percentage)
+    writer_dirname = '/output/e{}_b{}_rnn{}_rnnl{}_seq{}_lr{}_dp{}'.format(num_epochs, batch_size, rnn_size, rnn_layer_count, seq_length, learning_rate, data_percentage)
     train_writer = tf.summary.FileWriter(writer_dirname, graph=train_graph)
 
     batches = get_batches(int_text, batch_size, seq_length)
+
+print('Computation graph created.')
+
+print('Training...')
 
 with tf.Session(graph=train_graph) as sess:
     sess.run(tf.global_variables_initializer())
 
     #print('Train graph:', train_graph.get_operations())
+    print('Running {} batches per epoch.'.format(len(batches)))
 
     for epoch_i in range(num_epochs):
         state = sess.run(initial_state, {input_text: batches[0][0]})
@@ -227,7 +233,7 @@ with tf.Session(graph=train_graph) as sess:
     # Save Model
     saver = tf.train.Saver()
     saver.save(sess, save_dir)
-    print('Model Trained and Saved')
+    print('Model trained and saved.')
 
 loaded_graph = tf.Graph()
 with tf.Session(graph=loaded_graph) as sess:
@@ -239,7 +245,9 @@ with tf.Session(graph=loaded_graph) as sess:
     input_text, initial_state, final_state, probs = get_tensors(loaded_graph)
 
     # Sentences generation set~up
+    print('Generating new text with prime word: {}'.format(prime_word))
     gen_sentences = [prime_word + ':']
+
     prev_state = sess.run(initial_state, {input_text: np.array([[1]])})
 
     # Generate sentences
@@ -253,7 +261,6 @@ with tf.Session(graph=loaded_graph) as sess:
             [probs, final_state],
             {input_text: dyn_input, initial_state: prev_state})
         
-        #print('Probabilities.shape: ',  probabilities.shape)
         pred_word = pick_word(probabilities[dyn_seq_length-1], int_to_vocab)
 
         gen_sentences.append(pred_word)
@@ -265,5 +272,7 @@ with tf.Session(graph=loaded_graph) as sess:
         tv_script = tv_script.replace(' ' + token.lower(), key)
     tv_script = tv_script.replace('\n ', '\n')
     tv_script = tv_script.replace('( ', '(')
-        
+    
+    print("*********************************************************************************************")    
     print(tv_script)
+    print("*********************************************************************************************")    
