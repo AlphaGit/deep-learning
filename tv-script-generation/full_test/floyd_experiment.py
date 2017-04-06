@@ -27,27 +27,12 @@ import warnings
 import tensorflow as tf
 import timeit
 import datetime
+
 from text_processor import TextProcessor 
+from neural_network import NeuralNetwork
 
 from distutils.version import LooseVersion
 from tensorflow.contrib import seq2seq
-
-#########################################################################
-
-def get_inputs():
-    p_input = tf.placeholder(tf.int32, [None, None], name="input")
-    p_targets = tf.placeholder(tf.int32, [None, None], name="input")
-    p_learning_rate = tf.placeholder(tf.float32, name="learning_rate")
-    return (p_input, p_targets, p_learning_rate)
-
-#########################################################################
-
-def get_init_cell(batch_size, rnn_size, layer_count=2):
-    basic_lstm = tf.contrib.rnn.BasicLSTMCell(rnn_size)
-    multi_rnn_cell = tf.contrib.rnn.MultiRNNCell([basic_lstm] * layer_count)
-    initial_state = tf.identity(multi_rnn_cell.zero_state(batch_size, tf.float32), name="initial_state")
-    
-    return (multi_rnn_cell, initial_state)
 
 #########################################################################
 
@@ -178,23 +163,14 @@ tf.logging.set_verbosity(tf.logging.ERROR)
 text_processor = TextProcessor(data_dir, data_percentage)
 text = text_processor.load_and_preprocess_text()
 
-# Check TensorFlow Version
-assert LooseVersion(tf.__version__) >= LooseVersion('1.0'), 'Please use TensorFlow version 1.0 or newer'
-print('TensorFlow Version: {}'.format(tf.__version__))
-
-# Check for a GPU
-if not tf.test.gpu_device_name():
-    warnings.warn('No GPU found. Please use a GPU to train your neural network.')
-else:
-    print('Default GPU Device: {}'.format(tf.test.gpu_device_name()))
-
 print('Creating computation graph...')
 train_graph = tf.Graph()
+nn = NeuralNetwork()
 with train_graph.as_default():
     vocab_size = len(text_processor.int_to_vocab)
-    input_text, targets, lr = get_inputs()
+    input_text, targets, lr = nn.get_inputs()
     input_data_shape = tf.shape(input_text)
-    cell, initial_state = get_init_cell(input_data_shape[0], rnn_size, layer_count=rnn_layer_count)
+    cell, initial_state = nn.get_init_cell(input_data_shape[0], rnn_size, layer_count=rnn_layer_count)
     logits, final_state = build_nn(cell, rnn_size, input_text, vocab_size)
 
     # Probabilities for generating words
