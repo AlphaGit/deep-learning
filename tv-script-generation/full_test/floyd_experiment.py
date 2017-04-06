@@ -9,7 +9,6 @@ seq_length = 20
 learning_rate = 0.001
 data_percentage = 0.01 #1
 
-
 save_dir = './output/model'
 data_dir = 'all_lines_manual.txt'
 
@@ -23,40 +22,15 @@ prime_word = 'moe_szyslak'
 
 import os
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
-import helper
 import numpy as np
 import warnings
 import tensorflow as tf
 import timeit
 import datetime
+from text_processor import TextProcessor 
 
 from distutils.version import LooseVersion
-from collections import Counter
 from tensorflow.contrib import seq2seq
-
-#########################################################################
-
-def create_lookup_tables(text):
-    words = sorted(Counter(text), reverse=True)
-    vocab_to_int = { word: idx for idx, word in enumerate(words) }
-    int_to_vocab = { idx: word for word, idx in vocab_to_int.items()}
-    return vocab_to_int, int_to_vocab
-
-#########################################################################
-
-def token_lookup():
-    return {
-        ".": "||PERIOD||",
-        ",": "||COMMA||",
-        "\"": "||QUOTATION_MARK||",
-        ";": "||SEMICOLON||",
-        "!": "||EXCLAMATION_MARK||",
-        "?": "||QUESTION_MARK||",
-        "(": "||LEFT_PARENTHESIS||",
-        ")": "||RIGHT_PARENTHESIS||",
-        "--": "||DASH||",
-        "\n": "||return||"
-    }
 
 #########################################################################
 
@@ -133,38 +107,76 @@ def pick_word(probabilities, int_to_vocab):
 
 #########################################################################
 
-def preprocess_text(text, token_dict):
-    for key, token in token_dict.items():
-        text = text.replace(key, ' {} '.format(token))
-
-    text = text.lower()
-    text = text.split()
-
-    return text
+def get_tensors(loaded_graph):
+    final_state_tensor = loaded_graph.get_tensor_by_name("final_state:0")
+    probabilities_tensor = loaded_graph.get_tensor_by_name("probs:0")
+    return (final_state_tensor, probabilities_tensor)
 
 #########################################################################
 
-def get_tensors(loaded_graph):
-    input_tensor = loaded_graph.get_tensor_by_name("input:0")
-    initial_state_tensor = loaded_graph.get_tensor_by_name("initial_state:0")
-    final_state_tensor = loaded_graph.get_tensor_by_name("final_state:0")
-    probabilities_tensor = loaded_graph.get_tensor_by_name("probs:0")
-    return (input_tensor, initial_state_tensor, final_state_tensor, probabilities_tensor)
+def generate_test_script(prime_word, initial_state, gen_length, vocab_to_int, int_to_vocab, sess, token_dict):
+    print('Generating new text with prime word: {}'.format(prime_word))
+    test_final_state, test_probs = get_tensors(train_graph)
+    gen_sentences = [prime_word + ':']
+    prev_state = sess.run(initial_state, {input_text: np.array([[1]])})
+
+    for n in range(gen_length):
+        # Dynamic Input
+        dyn_input = [[vocab_to_int[word] for word in gen_sentences[-seq_length:]]]
+        dyn_seq_length = len(dyn_input[0])
+
+        # Get Prediction
+        probabilities, prev_state = sess.run(
+            [test_probs, test_final_state],
+            {input_text: dyn_input, initial_state: prev_state})
+        
+        pred_word = pick_word(probabilities[dyn_seq_length-1], int_to_vocab)
+
+        gen_sentences.append(pred_word)
+
+    # Remove tokens
+    tv_script = ' '.join(gen_sentences)
+    for key, token in token_dict.items():
+        ending = ' ' if key in ['\n', '(', '"'] else ''
+        tv_script = tv_script.replace(' ' + token.lower(), key)
+    tv_script = tv_script.replace('\n ', '\n')
+    tv_script = tv_script.replace('( ', '(')
+    return tv_script
+    
+#########################################################################
+
+def save_trained_model(save_dir, epoch_number):
+    saver = tf.train.Saver()
+    full_save_directory = '{}/epoch_{}'.format(save_dir, epoch_number)
+    if not os.path.exists(full_save_directory):
+        os.makedirs(full_save_directory)
+    saver.save(sess, full_save_directory)
+    print('Model trained and saved to {}.'.format(full_save_directory))
+
+#########################################################################
+
+def run_train_epoch(sess, initial_state, batches, learning_rate, cost, final_state, train_op, epoch_i, merged_summaries, train_writer):
+    state = sess.run(initial_state, {input_text: batches[0][0]})
+
+    for batch_i, (x, y) in enumerate(batches):
+        feed = {
+            input_text: x,
+            targets: y,
+            initial_state: state,
+            lr: learning_rate}
+        train_loss, state, _ = sess.run([cost, final_state, train_op], feed)
+
+    summary = sess.run(merged_summaries, feed)
+    train_writer.add_summary(summary, epoch_i)
+
+    return train_loss
 
 #########################################################################
 
 tf.logging.set_verbosity(tf.logging.ERROR)
 
-text = helper.load_data(data_dir)
-
-text_lines_to_use = int(len(text) * data_percentage)
-print("Data: Using {:,} out of {:,} total lines available".format(text_lines_to_use, len(text)))
-text = text[:text_lines_to_use]
-
-token_dict = token_lookup()
-text = preprocess_text(text, token_dict)
-vocab_to_int, int_to_vocab = create_lookup_tables(text)
-int_text = [vocab_to_int[word] for word in text]
+text_processor = TextProcessor(data_dir, data_percentage)
+text = text_processor.load_and_preprocess_text()
 
 # Check TensorFlow Version
 assert LooseVersion(tf.__version__) >= LooseVersion('1.0'), 'Please use TensorFlow version 1.0 or newer'
@@ -179,7 +191,7 @@ else:
 print('Creating computation graph...')
 train_graph = tf.Graph()
 with train_graph.as_default():
-    vocab_size = len(int_to_vocab)
+    vocab_size = len(text_processor.int_to_vocab)
     input_text, targets, lr = get_inputs()
     input_data_shape = tf.shape(input_text)
     cell, initial_state = get_init_cell(input_data_shape[0], rnn_size, layer_count=rnn_layer_count)
@@ -207,7 +219,7 @@ with train_graph.as_default():
     writer_dirname = '/output/e{}_b{}_rnn{}_rnnl{}_seq{}_lr{}_dp{}'.format(num_epochs, batch_size, rnn_size, rnn_layer_count, seq_length, learning_rate, data_percentage)
     train_writer = tf.summary.FileWriter(writer_dirname, graph=train_graph)
 
-    batches = get_batches(int_text, batch_size, seq_length)
+    batches = get_batches(text_processor.int_text, batch_size, seq_length)
 
 print('Computation graph created.')
 
@@ -222,17 +234,7 @@ with tf.Session(graph=train_graph) as sess:
     print('Running {} batches per epoch.'.format(len(batches)))
 
     for epoch_i in range(num_epochs):
-        state = sess.run(initial_state, {input_text: batches[0][0]})
-
-        last_start_time = timeit.default_timer()
-
-        for batch_i, (x, y) in enumerate(batches):
-            feed = {
-                input_text: x,
-                targets: y,
-                initial_state: state,
-                lr: learning_rate}
-            train_loss, state, _ = sess.run([cost, final_state, train_op], feed)
+        train_loss = run_train_epoch(sess, initial_state, batches, learning_rate, cost, final_state, train_op, epoch_i, merged_summaries, train_writer)
 
         last_end_time = timeit.default_timer()
 
@@ -243,47 +245,13 @@ with tf.Session(graph=train_graph) as sess:
         print('Epoch {:>3}/{} train_loss = {:.3f}, time so far {}, estimated to finish {}'
             .format(epoch_i + 1, num_epochs, train_loss, total_time_so_far, estimated_to_finish))
 
-        summary = sess.run(merged_summaries, feed)
-        train_writer.add_summary(summary, epoch_i)
-
         if (epoch_i % save_every == 0 or epoch_i == num_epochs - 1):
-            # Save Model
-            saver = tf.train.Saver()
-            full_save_directory = '{}/epoch_{}'.format(save_dir, epoch_i)
-            if not os.path.exists(full_save_directory):
-                os.makedirs(full_save_directory)
-            saver.save(sess, full_save_directory)
-            last_save_directory = full_save_directory
-            print('Model trained and saved to {}.'.format(full_save_directory))
+            save_trained_model(save_dir, epoch_i + 1)
 
         if (epoch_i % test_every == 0 or epoch_i == num_epochs - 1):
-            print('Generating new text with prime word: {}'.format(prime_word))
-            _, _, test_final_state, test_probs = get_tensors(train_graph)
-            gen_sentences = [prime_word + ':']
-            prev_state = sess.run(initial_state, {input_text: np.array([[1]])})
+            test_final_state, test_probs = get_tensors(train_graph)
+            tv_script = generate_test_script(prime_word, initial_state, gen_length, text_processor.vocab_to_int, text_processor.int_to_vocab, sess, text_processor.token_dict)
 
-            for n in range(gen_length):
-                # Dynamic Input
-                dyn_input = [[vocab_to_int[word] for word in gen_sentences[-seq_length:]]]
-                dyn_seq_length = len(dyn_input[0])
-
-                # Get Prediction
-                probabilities, prev_state = sess.run(
-                    [test_probs, test_final_state],
-                    {input_text: dyn_input, initial_state: prev_state})
-                
-                pred_word = pick_word(probabilities[dyn_seq_length-1], int_to_vocab)
-
-                gen_sentences.append(pred_word)
-
-            # Remove tokens
-            tv_script = ' '.join(gen_sentences)
-            for key, token in token_dict.items():
-                ending = ' ' if key in ['\n', '(', '"'] else ''
-                tv_script = tv_script.replace(' ' + token.lower(), key)
-            tv_script = tv_script.replace('\n ', '\n')
-            tv_script = tv_script.replace('( ', '(')
-            
-            print("*********************************************************************************************")    
+            print("*********************************************************************************************")
             print(tv_script)
-            print("*********************************************************************************************")    
+            print("*********************************************************************************************")
