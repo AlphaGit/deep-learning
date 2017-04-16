@@ -1,6 +1,8 @@
 # -*- coding: utf-8 -*-
 ## Parameters
 
+# local
+'''
 num_epochs = 20 # 100
 batch_size = 64 #1024
 rnn_size = 20 # 50
@@ -8,6 +10,18 @@ rnn_layer_count = 1 #2
 seq_length = 20
 learning_rate = 0.001
 data_percentage = 0.01 #1
+'''
+
+# floyd
+#'''
+num_epochs = 100
+batch_size = 1024
+rnn_size = 50
+rnn_layer_count = 2
+seq_length = 20
+learning_rate = 0.001
+data_percentage = 1
+#'''
 
 save_dir = './output/model'
 data_dir = 'all_lines_manual.txt'
