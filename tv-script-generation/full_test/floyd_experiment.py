@@ -15,7 +15,7 @@ data_percentage = 0.01 #1
 # floyd
 #'''
 num_epochs = 100
-batch_size = 1024
+batch_size = 512
 rnn_size = 50
 rnn_layer_count = 2
 seq_length = 20

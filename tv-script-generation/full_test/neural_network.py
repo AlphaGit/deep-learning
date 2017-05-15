@@ -68,18 +68,6 @@ class NeuralNetwork():
             self.train_writer = tf.summary.FileWriter(summary_output_dir, graph=self.train_graph)
 
     def run_train_epoch(self, sess, batches, learning_rate, epoch_i):
-        state = sess.run(self.initial_state, {self.input_text: batches[0][0]})
-
-        for batch_i, (x, y) in enumerate(batches):
-            feed = {
-                self.input_text: x,
-                self.targets: y,
-                self.initial_state: state,
-                self.lr: learning_rate}
-            train_loss, state, _ = sess.run([self.cost, self.final_state, self.train_op], feed)
-
-        summary = sess.run(self.merged_summaries, feed)
-        self.train_writer.add_summary(summary, epoch_i)
 
         return train_loss
 
@@ -138,7 +126,19 @@ class NeuralNetwork():
 
             all_start_time = timeit.default_timer()
             for epoch_i in range(num_epochs):
-                train_loss = self.run_train_epoch(sess, batches, learning_rate, epoch_i)
+                state = sess.run(self.initial_state, {self.input_text: batches[0][0]})
+
+                for batch_i, (x, y) in enumerate(batches):
+                    feed = {
+                        self.input_text: x,
+                        self.targets: y,
+                        self.initial_state: state,
+                        self.lr: learning_rate}
+                    train_loss, state, _ = sess.run([self.cost, self.final_state, self.train_op], feed)
+                    print('Ran batch {}', batch_i)
+
+                summary = sess.run(self.merged_summaries, feed)
+                self.train_writer.add_summary(summary, epoch_i)
 
                 last_end_time = timeit.default_timer()
 
